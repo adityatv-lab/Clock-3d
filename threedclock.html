@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3d Clock</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Orbitron', monospace;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 5px;
+            border: 1px solid #333;
+            z-index: 1001;
+            font-size: 12px;
+        }
+        #loading-screen {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 1000;
+        }
+        #loading-screen .loader {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #cccccc;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+        }
+        #loading-screen p {
+            margin-top: 20px;
+            font-size: 1.2em;
+            color: #ccc;
+        }
+        #control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px;
+            background: rgba(10, 15, 26, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid #55607A;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+        #control-panel label {
+            margin-right: 10px;
+            font-size: 0.9rem;
+        }
+        #timezone-selector {
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: 1px solid #334155;
+            background: rgba(2, 8, 26, 0.8);
+            color: #fff;
+            font-family: 'Orbitron', monospace;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <div class="loader"></div>
+        <p>Correcting Numeral Orientation...</p>
+    </div>
+    <div id="info">
+        3d Clock by Aditya TV<br>
+        Controls: Mouse Drag (Rotate), Scroll (Zoom)
+    </div>
+    
+    <div id="control-panel">
+        <label for="timezone-selector">Location:</label>
+        <select id="timezone-selector"></select>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        
+        let scene, camera, renderer, controls;
+        let mainClockGroup, handsGroup, orreryGroup, celestialSphere;
+        let dateTextMesh, digitalTimeTextMesh;
+        const fontLoader = new FontLoader();
+        let mainFont;
+
+        const materials = {
+            darkTitanium: new THREE.MeshStandardMaterial({ color: 0x222233, metalness: 0.8, roughness: 0.4 }),
+            polishedGold: new THREE.MeshStandardMaterial({ color: 0xE0B645, metalness: 0.95, roughness: 0.25, envMapIntensity: 1 }),
+            brushedSteel: new THREE.MeshStandardMaterial({ color: 0x8e94a1, metalness: 0.8, roughness: 0.5, envMapIntensity: 0.5 }),
+            ruby: new THREE.MeshStandardMaterial({ color: 0xCD1A3E, roughness: 0.1, metalness: 0.2, envMapIntensity: 1 }),
+            deepCharcoalDial: new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.1, roughness: 0.8 }),
+            matteWhite: new THREE.MeshStandardMaterial({ color: 0xFFFFFF, roughness: 0.8, metalness: 0.1 }),
+            sapphireCrystal: new THREE.MeshPhysicalMaterial({
+                color: 0xffffff, metalness: 0, roughness: 0.05,
+                transmission: 0.95, transparent: true, opacity: 0.2,
+                ior: 1.77, reflectivity: 0.5, thickness: 2
+            }),
+        };
+        
+        const timezoneSelector = document.getElementById('timezone-selector');
+        
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
+            camera.position.set(0, 0, 180);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            document.body.insertBefore(renderer.domElement, document.body.firstChild);
+            
+            const cubeTextureLoader = new THREE.CubeTextureLoader();
+            const envMap = cubeTextureLoader.load([
+                'https://threejs.org/examples/textures/cube/Bridge2/px.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/nx.jpg',
+                'https://threejs.org/examples/textures/cube/Bridge2/py.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/ny.jpg',
+                'https://threejs.org/examples/textures/cube/Bridge2/pz.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/nz.jpg'
+            ]);
+            scene.environment = envMap;
+            scene.background = new THREE.Color(0x050505);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            scene.add(ambientLight);
+            const keyLight = new THREE.DirectionalLight(0xffffff, 4.0);
+            keyLight.position.set(60, 60, 60);
+            keyLight.castShadow = true;
+            keyLight.shadow.mapSize.width = 2048;
+            keyLight.shadow.mapSize.height = 2048;
+            scene.add(keyLight);
+            
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.minDistance = 50;
+            controls.maxDistance = 500;
+            controls.target.set(0, 0, 0);
+
+            mainClockGroup = new THREE.Group();
+            scene.add(mainClockGroup);
+
+            populateTimezones();
+            
+            fontLoader.load('https://cdn.jsdelivr.net/npm/three@0.165.0/examples/fonts/gentilis_bold.typeface.json', (font) => {
+                mainFont = font;
+                buildClockMechanism();
+                buildOrrery();
+                buildCelestialSphere();
+                build3DInfoDisplays();
+                document.getElementById('loading-screen').style.display = 'none';
+                animate();
+            });
+
+            window.addEventListener('resize', onWindowResize);
+        }
+        
+        function buildClockMechanism() {
+            const caseGeometry = new THREE.CylinderGeometry(100, 100, 20, 128);
+            const caseMesh = new THREE.Mesh(caseGeometry, materials.darkTitanium);
+            caseMesh.rotation.x = Math.PI / 2;
+            mainClockGroup.add(caseMesh);
+            
+            const bezelGeometry = new THREE.TorusGeometry(95, 5, 16, 128);
+            const bezelMesh = new THREE.Mesh(bezelGeometry, materials.polishedGold);
+            bezelMesh.rotation.x = Math.PI / 2;
+            bezelMesh.position.z = 10.1;
+            mainClockGroup.add(bezelMesh);
+
+            const dialGeometry = new THREE.CircleGeometry(90, 128);
+            const dialMesh = new THREE.Mesh(dialGeometry, materials.deepCharcoalDial);
+            dialMesh.position.z = 9;
+            dialMesh.receiveShadow = true;
+            mainClockGroup.add(dialMesh);
+
+            const crystalGeo = new THREE.CylinderGeometry(95, 95, 2, 128);
+            const crystalMesh = new THREE.Mesh(crystalGeo, materials.sapphireCrystal);
+            crystalMesh.rotation.x = Math.PI/2;
+            crystalMesh.position.z = 16;
+            mainClockGroup.add(crystalMesh);
+            
+            for (let i = 1; i <= 12; i++) {
+                const numStr = i.toString();
+                const numGeo = new TextGeometry(numStr, {font: mainFont, size: 8, height: 2});
+                numGeo.center();
+                const numMesh = new THREE.Mesh(numGeo, materials.polishedGold);
+                const angle = (Math.PI / 2) - (i / 12) * Math.PI * 2;
+                const radius = 75;
+                numMesh.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 11);
+                // --- ROTATION REMOVED TO MAKE NUMBERS UPRIGHT ---
+                // numMesh.rotation.z = -angle + Math.PI/2; 
+                numMesh.castShadow = true;
+                mainClockGroup.add(numMesh);
+            }
+            
+            for (let i = 0; i < 60; i++) {
+                const isHour = i % 5 === 0;
+                // Markers are still placed, but numbers take precedence
+                if(isHour) continue;
+                const markerHeight = 2;
+                const markerWidth = 1;
+                const markerGeo = new THREE.BoxGeometry(markerWidth, markerHeight, 1);
+                const marker = new THREE.Mesh(markerGeo, materials.brushedSteel);
+                const angle = (i / 60) * Math.PI * 2;
+                const radius = 85;
+                marker.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 10);
+                marker.rotation.z = angle + Math.PI / 2;
+                mainClockGroup.add(marker);
+            }
+            
+            handsGroup = new THREE.Group();
+            handsGroup.position.z = 15;
+            
+            const hourHandShape = new THREE.Shape();
+            hourHandShape.moveTo(-3, -8);
+            hourHandShape.lineTo(3, -8);
+            hourHandShape.lineTo(0, 50);
+            hourHandShape.closePath();
+            const hourHandGeo = new THREE.ExtrudeGeometry(hourHandShape, { depth: 2, bevelEnabled: true, bevelThickness: 0.5, bevelSize: 0.5, bevelSegments: 2 });
+            const hourHand = new THREE.Mesh(hourHandGeo, materials.matteWhite);
+            hourHand.name = "hourHand";
+            hourHand.castShadow = true;
+
+            const minuteHandShape = new THREE.Shape();
+            minuteHandShape.moveTo(-2.5, -10);
+            minuteHandShape.lineTo(2.5, -10);
+            minuteHandShape.lineTo(0, 75);
+            minuteHandShape.closePath();
+            const minuteHandGeo = new THREE.ExtrudeGeometry(minuteHandShape, { depth: 2, bevelEnabled: true, bevelThickness: 0.5, bevelSize: 0.5, bevelSegments: 2 });
+            const minuteHand = new THREE.Mesh(minuteHandGeo, materials.matteWhite);
+            minuteHand.name = "minuteHand";
+            minuteHand.castShadow = true;
+
+            const secondHandGroup = new THREE.Group();
+            secondHandGroup.name = "secondHand";
+            const secondHandShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.2, 85, 16), materials.ruby);
+            secondHandShaft.position.y = 37.5; 
+            const secondHandCounterweight = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 2, 16), materials.ruby);
+            secondHandCounterweight.position.y = -10;
+            secondHandGroup.add(secondHandShaft, secondHandCounterweight);
+            secondHandGroup.castShadow = true;
+            
+            handsGroup.add(hourHand, minuteHand, secondHandGroup);
+            
+            const centerPin = new THREE.Mesh(new THREE.CylinderGeometry(5,5,5,32), materials.polishedGold);
+            centerPin.rotation.x = Math.PI / 2;
+            handsGroup.add(centerPin);
+
+            mainClockGroup.add(handsGroup);
+            createBackgroundGears();
+        }
+        
+        function createBackgroundGears() {
+            const gearGroup = new THREE.Group();
+            gearGroup.position.z = -20;
+            for(let i=0; i<150; i++) {
+                const radius = 5 + Math.random() * 40;
+                const gearGeo = new THREE.ExtrudeGeometry(createGearShape(radius, 10 + Math.floor(radius/2), radius/5), { depth: 1 + Math.random() * 4, bevelEnabled: false, bevelThickness: 0.2, bevelSize: 0.1, bevelSegments: 2 });
+                const material = Math.random() > 0.6 ? materials.brushedSteel : materials.polishedGold;
+                const gear = new THREE.Mesh(gearGeo, material.clone());
+                gear.material.opacity = 0.3;
+                gear.material.transparent = true;
+                gear.position.set(
+                    (Math.random() - 0.5) * 180, (Math.random() - 0.5) * 180, (Math.random() - 0.5) * 30 - 15
+                );
+                gear.rotation.z = Math.random() * Math.PI * 2;
+                gear.userData.speed = (Math.random() - 0.5) * 0.01;
+                gearGroup.add(gear);
+            }
+            mainClockGroup.add(gearGroup);
+        }
+
+        function createGearShape(outerRadius, teeth, toothHeight) {
+            const shape = new THREE.Shape();
+            const angleStep = (Math.PI * 2) / (teeth * 2);
+            for (let i = 0; i < teeth * 2; i++) {
+                const radius = i % 2 === 0 ? outerRadius - toothHeight : outerRadius;
+                const angle = i * angleStep;
+                shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+            }
+            return shape;
+        }
+
+        function buildOrrery() {
+            orreryGroup = new THREE.Group();
+            orreryGroup.position.z = 25;
+            const sunGeo = new THREE.SphereGeometry(6, 32, 32);
+            const sunMat = new THREE.MeshStandardMaterial({color: 0xffdd00, emissive: 0xffdd00, emissiveIntensity: 1});
+            const sun = new THREE.Mesh(sunGeo, sunMat);
+            const sunLight = new THREE.PointLight(0xffddaa, 5000, 300);
+            sun.add(sunLight);
+            orreryGroup.add(sun);
+            
+            const planetsData = [ { name: 'Mercury', color: 0x999999, radius: 0.5, distance: 15, speed: 4.15 }, { name: 'Venus', color: 0xedc9af, radius: 0.9, distance: 20, speed: 1.62 }, { name: 'Earth', color: 0x36669d, radius: 1, distance: 28, speed: 1 }, { name: 'Mars', color: 0xc1440e, radius: 0.7, distance: 38, speed: 0.53 }, ];
+            
+            planetsData.forEach(p => {
+                const planetGroup = new THREE.Group();
+                planetGroup.name = p.name + "_group";
+                planetGroup.userData.speed = p.speed;
+                const orbitGeo = new THREE.TorusGeometry(p.distance, 0.1, 8, 128);
+                const orbitMat = new THREE.MeshBasicMaterial({ color: 0x445588, transparent: true, opacity: 0.3});
+                const orbit = new THREE.Mesh(orbitGeo, orbitMat);
+                orbit.rotation.x = Math.PI/2;
+                const planetGeo = new THREE.SphereGeometry(p.radius, 16, 16);
+                const planet = new THREE.Mesh(planetGeo, new THREE.MeshStandardMaterial({color: p.color, roughness:0.7, metalness:0.1}));
+                planet.position.x = p.distance;
+                planet.name = p.name;
+                planetGroup.add(planet);
+                orreryGroup.add(orbit);
+                orreryGroup.add(planetGroup);
+            });
+            mainClockGroup.add(orreryGroup);
+        }
+
+        function buildCelestialSphere() {
+            const starGeo = new THREE.BufferGeometry();
+            const starVertices = [];
+            for (let i = 0; i < 20000; i++) {
+                const x = THREE.MathUtils.randFloatSpread(4000);
+                const y = THREE.MathUtils.randFloatSpread(4000);
+                const z = THREE.MathUtils.randFloatSpread(4000);
+                starVertices.push(x, y, z);
+            }
+            starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.5 });
+            celestialSphere = new THREE.Points(starGeo, starMat);
+            scene.add(celestialSphere);
+        }
+        
+        function build3DInfoDisplays() {
+            const dateTextGeo = new TextGeometry('', { font: mainFont, size: 4, height: 1 });
+            dateTextMesh = new THREE.Mesh(dateTextGeo, materials.matteWhite);
+            dateTextMesh.position.set(0, -35, 12);
+            mainClockGroup.add(dateTextMesh);
+
+            const timeTextGeo = new TextGeometry('', { font: mainFont, size: 8, height: 1 });
+            digitalTimeTextMesh = new THREE.Mesh(timeTextGeo, materials.matteWhite);
+            digitalTimeTextMesh.position.set(0, -50, 12);
+            mainClockGroup.add(digitalTimeTextMesh);
+        }
+
+        const clockAnimation = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const now = new Date(new Date().toLocaleString('en-US', { timeZone: timezoneSelector.value }));
+            const elapsedTime = clockAnimation.getElapsedTime();
+
+            updateHands(now);
+            update3DInfoDisplays(now);
+            updateOrrery(elapsedTime);
+            updateBackgroundGears();
+            
+            celestialSphere.rotation.y += 0.00002;
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function updateHands(now) {
+            const seconds = now.getSeconds() + now.getMilliseconds() / 1000;
+            const minutes = now.getMinutes() + seconds / 60;
+            const hours = now.getHours() % 12 + minutes / 60;
+            handsGroup.getObjectByName('secondHand').rotation.z = -THREE.MathUtils.degToRad(seconds * 6);
+            handsGroup.getObjectByName('minuteHand').rotation.z = -THREE.MathUtils.degToRad(minutes * 6);
+            handsGroup.getObjectByName('hourHand').rotation.z = -THREE.MathUtils.degToRad(hours * 30);
+        }
+        
+        function update3DInfoDisplays(now) {
+            const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            const dateString = now.toLocaleDateString('en-US', dateOptions);
+            let currentGeo = dateTextMesh.geometry;
+            let newGeo = new TextGeometry(dateString, { font: mainFont, size: 4, height: 1 });
+            currentGeo.dispose();
+            dateTextMesh.geometry = newGeo;
+            dateTextMesh.geometry.center();
+            dateTextMesh.position.x = 0;
+            dateTextMesh.position.y = -35; 
+            
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const milliseconds = String(now.getMilliseconds()).padStart(3, '0').slice(0,2);
+            const timeString = `${hours}:${minutes}:${seconds}.${milliseconds}`;
+            
+            currentGeo = digitalTimeTextMesh.geometry;
+            newGeo = new TextGeometry(timeString, { font: mainFont, size: 8, height: 1 });
+            currentGeo.dispose();
+            digitalTimeTextMesh.geometry = newGeo;
+            digitalTimeTextMesh.geometry.center();
+            digitalTimeTextMesh.position.x = 0;
+            digitalTimeTextMesh.position.y = -50;
+        }
+
+        function updateOrrery(elapsedTime) {
+             if (orreryGroup) {
+                orreryGroup.children.forEach(child => {
+                    if (child.isGroup && child.userData.speed) {
+                        child.rotation.z = elapsedTime * 0.1 * child.userData.speed;
+                    }
+                });
+            }
+        }
+        
+        function updateBackgroundGears() {
+            const gearGroup = mainClockGroup.children.find(c => c.children.some(g => g.userData.speed !== undefined));
+            if(gearGroup) {
+                gearGroup.children.forEach(gear => { gear.rotation.z += gear.userData.speed; });
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function populateTimezones() {
+            const timezones = {
+                "Kolkata (IST)": "Asia/Kolkata",
+                "Mumbai": "Asia/Kolkata",
+                "Delhi": "Asia/Kolkata",
+                "Bengaluru": "Asia/Kolkata",
+                "London (GMT)": "Europe/London",
+                "New York (EST)": "America/New_York",
+                "Los Angeles (PST)": "America/Los_Angeles",
+                "Tokyo (JST)": "Asia/Tokyo",
+                "Sydney (AEST)": "Australia/Sydney",
+                "Dubai (GST)": "Asia/Dubai",
+                "Moscow (MSK)": "Europe/Moscow",
+                "Beijing (CST)": "Asia/Shanghai",
+                "Sao Paulo (BRT)": "America/Sao_Paulo",
+                "Johannesburg (SAST)": "Africa/Johannesburg"
+            };
+            for (const [name, value] of Object.entries(timezones)) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = name;
+                timezoneSelector.appendChild(option);
+            }
+            timezoneSelector.value = 'Asia/Kolkata';
+        }
+        
+        init();
+    </script>
+</body>
+</html>
